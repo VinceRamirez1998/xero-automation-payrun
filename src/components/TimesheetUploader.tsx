@@ -37,7 +37,7 @@ export default function TimesheetUploader() {
     <div className="max-w-lg mx-auto p-8 space-y-4 bg-white rounded shadow">
       <h1 className="text-xl font-bold">Xero Payroll Bulk Uploader</h1>
       <button
-        onClick={connectXero}
+        onClick={() => (window.location.href = "/api/auth/login")}
         className="px-4 py-2 bg-green-600 text-white rounded"
       >
         Connect to Xero
