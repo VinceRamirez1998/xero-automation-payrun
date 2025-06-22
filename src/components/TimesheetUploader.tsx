@@ -18,6 +18,7 @@ export default function TimesheetUploader() {
     const res = await fetch("/api/upload-timesheets", {
       method: "POST",
       body: formData,
+      credentials: "include",
     });
 
     if (res.ok) setSubmitted(true);
