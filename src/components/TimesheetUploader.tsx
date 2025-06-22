@@ -1,76 +1,99 @@
 "use client";
+
 import React, { useState } from "react";
 
 export default function TimesheetUploader() {
   const [files, setFiles] = useState<File[]>([]);
-  const [submitted, setSub] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Handle file selection
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFiles(Array.from(e.target.files || []));
     setError(null);
-    setSub(false);
+    setSubmitted(false);
   };
 
+  // Kick off the Xero OAuth flow
   const connectXero = () => {
     window.location.href = "/api/auth/login";
   };
 
+  // Upload the selected Excel files to your API
   const handleSubmit = async () => {
     setError(null);
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
+
     const res = await fetch("/api/upload-timesheets", {
       method: "POST",
       body: formData,
-      credentials: "include",
+      credentials: "include", // send the xero_token cookie
     });
+
     if (res.ok) {
-      setSub(true);
+      setSubmitted(true);
     } else {
-      const text = await res.text();
-      setError(text || "Upload failed");
+      const msg = await res.text();
+      setError(msg || "Upload failed");
     }
   };
 
   return (
-    <div className="max-w-lg mx-auto p-8 space-y-4 bg-white rounded shadow">
-      <h1 className="text-xl font-bold">Xero Payroll Bulk Uploader</h1>
-      <button
-        onClick={() => (window.location.href = "/api/auth/login")}
-        className="px-4 py-2 bg-green-600 text-white rounded"
-      >
-        Connect to Xero
-      </button>
+    <div className="max-w-lg mx-auto p-8 bg-white rounded shadow space-y-6">
+      <h1 className="text-2xl font-bold text-center">
+        Xero Timesheet Bulk Uploader
+      </h1>
 
-      <input
-        type="file"
-        accept=".xlsx,.xls"
-        multiple
-        onChange={handleFiles}
-        className="block"
-      />
+      <div className="flex justify-center">
+        <button
+          onClick={connectXero}
+          className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700"
+        >
+          Connect to Xero
+        </button>
+      </div>
+
+      <div>
+        <label className="block mb-2 font-medium">
+          Select .xlsx/.xls files:
+        </label>
+        <input
+          type="file"
+          accept=".xlsx,.xls"
+          multiple
+          onChange={handleFiles}
+          className="block w-full"
+        />
+      </div>
 
       {files.length > 0 && (
-        <ul className="list-disc ml-5">
-          {files.map((f, i) => (
-            <li key={i}>{f.name}</li>
-          ))}
-        </ul>
+        <div>
+          <p className="font-medium">Files ready to upload:</p>
+          <ul className="list-disc list-inside text-sm text-gray-700">
+            {files.map((f, idx) => (
+              <li key={idx}>{f.name}</li>
+            ))}
+          </ul>
+        </div>
       )}
 
-      {error && <p className="text-red-600">{error}</p>}
+      {error && <div className="text-red-600 font-medium">⚠️ {error}</div>}
 
-      <button
-        onClick={handleSubmit}
-        disabled={files.length === 0}
-        className="px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
-      >
-        Upload to Xero
-      </button>
+      <div className="flex justify-center">
+        <button
+          onClick={handleSubmit}
+          disabled={files.length === 0}
+          className="px-6 py-2 bg-blue-600 text-white rounded disabled:opacity-50 hover:bg-blue-700"
+        >
+          Upload to Xero
+        </button>
+      </div>
 
       {submitted && (
-        <p className="text-green-600">✅ Timesheets uploaded successfully!</p>
+        <div className="text-green-600 font-medium text-center">
+          ✅ Timesheets uploaded successfully!
+        </div>
       )}
     </div>
   );
