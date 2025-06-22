@@ -1,4 +1,4 @@
-import TimesheetUploader from "@/components/TimesheetUploader";
+import TimesheetUploader from "../components/TimesheetUploader";
 
 export default function Home() {
   return (
