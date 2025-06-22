@@ -35,10 +35,10 @@ export async function GET(request) {
     const response = NextResponse.redirect(new URL("/", request.url));
     response.cookies.set("xero_token", JSON.stringify(token), {
       httpOnly: true,
-      secure: true,
-      sameSite: "none",
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax", // allow it for top-level navigations + same-site fetches
       path: "/",
-      maxAge: token.expires_in, // optional: expire cookie with the token
+      maxAge: token.expires_in,
     });
     return response;
   } catch (error) {
