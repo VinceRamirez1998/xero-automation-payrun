@@ -35,7 +35,7 @@ export async function GET(request) {
     const response = NextResponse.redirect(new URL("/", request.url));
     response.cookies.set("xero_token", JSON.stringify(token), {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: true,
       sameSite: "none",
       path: "/",
       maxAge: token.expires_in, // optional: expire cookie with the token
