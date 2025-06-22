@@ -1,8 +1,6 @@
-// File: /src/app/api/auth/callback/route.js
-
-import { NextResponse } from "next/server";
 import { AuthorizationCode } from "simple-oauth2";
 
+// OAuth client setup (same as before)
 const client = new AuthorizationCode({
   client: {
     id: process.env.XERO_CLIENT_ID,
@@ -16,36 +14,44 @@ const client = new AuthorizationCode({
 });
 
 export async function GET(request) {
-  // 1. Grab the ?code= from Xero’s redirect
-  const { searchParams } = new URL(request.url);
-  const code = searchParams.get("code");
+  const url = new URL(request.url);
+  const code = url.searchParams.get("code");
   if (!code) {
-    return NextResponse.json({ error: "Missing code" }, { status: 400 });
+    return new Response("Missing code", { status: 400 });
   }
 
+  // Exchange code for token
+  let token;
   try {
-    // 2. Exchange it for tokens
     const result = await client.getToken({
       code,
       redirect_uri: process.env.XERO_REDIRECT_URI,
     });
-    const token = result.token;
-
-    // 3. Set it as an HTTP-only Secure cookie & redirect home
-    const response = NextResponse.redirect(new URL("/", request.url));
-    response.cookies.set("xero_token", JSON.stringify(token), {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
-      sameSite: "lax", // allow it for top-level navigations + same-site fetches
-      path: "/",
-      maxAge: token.expires_in,
-    });
-    return response;
-  } catch (error) {
-    console.error("Token exchange failed:", error);
-    return NextResponse.json(
-      { error: "Xero token exchange failed" },
-      { status: 500 }
-    );
+    token = result.token;
+  } catch (err) {
+    console.error("Token exchange error", err);
+    return new Response("OAuth error", { status: 500 });
   }
+
+  // Return HTML that writes the cookie and redirects to /
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><title>Logging you in…</title></head>
+      <body>
+        <script>
+          // Store the token as an HTTP-ish cookie via JS
+          document.cookie = "xero_token=" 
+            + encodeURIComponent(${JSON.stringify(token)}) 
+            + "; path=/; secure; samesite=lax;";
+          // Now go home
+          window.location.href = "/";
+        </script>
+        <p>Logging you in…</p>
+      </body>
+    </html>
+  `;
+  return new Response(html, {
+    headers: { "Content-Type": "text/html" },
+  });
 }
