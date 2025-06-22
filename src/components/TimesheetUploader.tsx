@@ -1,100 +1,89 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 
 export default function TimesheetUploader() {
+  const [token, setToken] = useState("");
   const [files, setFiles] = useState<File[]>([]);
-  const [submitted, setSubmitted] = useState(false);
+  const [submitted, setSub] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Handle file selection
-  const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setFiles(Array.from(e.target.files || []));
-    setError(null);
-    setSubmitted(false);
-  };
+  // load token from localStorage
+  useEffect(() => {
+    const saved = window.localStorage.getItem("xero_token");
+    if (saved) setToken(saved);
+  }, []);
 
-  // Kick off the Xero OAuth flow
-  const connectXero = () => {
-    window.location.href = "/api/auth/login";
-  };
-
-  // Upload the selected Excel files to your API
-  const handleSubmit = async () => {
-    setError(null);
-    const formData = new FormData();
-    files.forEach((f) => formData.append("files", f));
-
-    const res = await fetch("/api/upload-timesheets", {
-      method: "POST",
-      body: formData,
-      credentials: "include", // send the xero_token cookie
-    });
-
-    if (res.ok) {
-      setSubmitted(true);
-    } else {
-      const msg = await res.text();
-      setError(msg || "Upload failed");
-    }
-  };
+  // when token changes, persist it
+  useEffect(() => {
+    if (token) window.localStorage.setItem("xero_token", token);
+  }, [token]);
 
   return (
-    <div className="max-w-lg mx-auto p-8 bg-white rounded shadow space-y-6">
-      <h1 className="text-2xl font-bold text-center">
-        Xero Timesheet Bulk Uploader
-      </h1>
+    <div className="max-w-lg mx-auto p-6 bg-white rounded shadow space-y-6">
+      <h1 className="text-2xl font-bold">Excel → Xero Timesheet Uploader</h1>
 
-      <div className="flex justify-center">
-        <button
-          onClick={connectXero}
-          className="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-        >
-          Connect to Xero
-        </button>
+      <div className="space-y-2">
+        <label className="font-medium">
+          Step 1: Paste your Xero Access Token
+        </label>
+        <textarea
+          rows={3}
+          value={token}
+          onChange={(e) => setToken(e.target.value.trim())}
+          placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+          className="w-full border px-2 py-1"
+        />
+        <p className="text-sm text-gray-600">
+          You can obtain a token from Postman or Xero’s OAuth playground.
+        </p>
       </div>
 
-      <div>
-        <label className="block mb-2 font-medium">
-          Select .xlsx/.xls files:
-        </label>
+      <div className="space-y-2">
+        <label className="font-medium">Step 2: Select your .xlsx files</label>
         <input
           type="file"
           accept=".xlsx,.xls"
           multiple
-          onChange={handleFiles}
-          className="block w-full"
+          onChange={(e) => setFiles(Array.from(e.target.files || []))}
+          className="block"
         />
       </div>
 
       {files.length > 0 && (
-        <div>
-          <p className="font-medium">Files ready to upload:</p>
-          <ul className="list-disc list-inside text-sm text-gray-700">
-            {files.map((f, idx) => (
-              <li key={idx}>{f.name}</li>
-            ))}
-          </ul>
-        </div>
+        <ul className="list-disc ml-5">
+          {files.map((f, i) => (
+            <li key={i}>{f.name}</li>
+          ))}
+        </ul>
       )}
 
-      {error && <div className="text-red-600 font-medium">⚠️ {error}</div>}
+      {error && <p className="text-red-600">{error}</p>}
+      {submitted && <p className="text-green-600">✅ Uploaded!</p>}
 
-      <div className="flex justify-center">
-        <button
-          onClick={handleSubmit}
-          disabled={files.length === 0}
-          className="px-6 py-2 bg-blue-600 text-white rounded disabled:opacity-50 hover:bg-blue-700"
-        >
-          Upload to Xero
-        </button>
-      </div>
+      <button
+        disabled={!token || files.length === 0}
+        onClick={async () => {
+          setError(null);
+          const form = new FormData();
+          files.forEach((f) => form.append("files", f));
 
-      {submitted && (
-        <div className="text-green-600 font-medium text-center">
-          ✅ Timesheets uploaded successfully!
-        </div>
-      )}
+          const res = await fetch("/api/upload-timesheets", {
+            method: "POST",
+            body: form,
+            headers: { Authorization: `Bearer ${token}` },
+          });
+
+          if (res.ok) setSub(true);
+          else {
+            const txt = await res.text();
+            setError(txt || "Upload failed");
+          }
+        }}
+        className="w-full px-4 py-2 bg-blue-600 text-white rounded disabled:opacity-50"
+      >
+        Upload to Xero
+      </button>
     </div>
   );
 }

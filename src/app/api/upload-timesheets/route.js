@@ -1,125 +1,101 @@
 import { read, utils } from "xlsx";
+import { NextResponse } from "next/server";
 
-// Helper: pull the token JSON object out of the incoming request’s cookies
-function getTokenFromHeaders(headers) {
-  const cookie = headers.get("cookie") || "";
-  const match = cookie.match(/xero_token=([^;]+)/);
-  if (!match) return null;
-  try {
-    return JSON.parse(decodeURIComponent(match[1]));
-  } catch {
-    return null;
+export async function POST(request) {
+  // 1️⃣ Get token from Authorization header
+  const auth = request.headers.get("authorization") || "";
+  if (!auth.startsWith("Bearer ")) {
+    return NextResponse.text("Missing Bearer token", { status: 401 });
   }
-}
+  const token = JSON.parse(auth.replace("Bearer ", ""));
 
-// Helper: generic GET from Xero API, returns parsed JSON
-async function xeroGET(path, token) {
-  const res = await fetch(`https://api.xero.com/payroll.xro/2.0${path}`, {
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      Accept: "application/json",
-    },
-  });
-  if (!res.ok) throw new Error(`Xero GET ${path} failed: ${await res.text()}`);
-  const json = await res.json();
-  return json;
-}
-
-export async function POST(req) {
-  // 1️⃣ Authenticate
-  const token = getTokenFromHeaders(req.headers);
-  if (!token) return new Response("Not authenticated", { status: 401 });
-
-  // 2️⃣ Parse all uploaded Excel files
-  const formData = await req.formData();
-  const files = formData.getAll("files");
-  const parsed = [];
-
+  // 2️⃣ Parse Excel uploads
+  const form = await request.formData();
+  const files = form.getAll("files");
+  const rows = [];
   for (const file of files) {
     if (!(file instanceof File)) continue;
-    const buffer = await file.arrayBuffer();
-    const wb = read(buffer, { type: "buffer" });
+    const buf = await file.arrayBuffer();
+    const wb = read(buf, { type: "buffer" });
     const sheet = wb.SheetNames[0];
-    const rows = utils.sheet_to_json(wb.Sheets[sheet]);
-    /* rows is an array of objects like:
-       { firstname: "James", lastname: "Lebron", "normal hours": 76, ... } */
-    parsed.push(...rows);
+    rows.push(...utils.sheet_to_json(wb.Sheets[sheet]));
   }
 
-  // 3️⃣ Fetch lookups from Xero once
-  const [{ Employees }, { EarningsRates }] = await Promise.all([
-    xeroGET("/Employees", token),
-    xeroGET("/EarningsRates", token),
+  // 3️⃣ Lookup Employees & EarningsRates
+  const [eRes, rRes] = await Promise.all([
+    fetch("https://api.xero.com/payroll.xro/2.0/Employees", {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+    }),
+    fetch("https://api.xero.com/payroll.xro/2.0/EarningsRates", {
+      headers: { Authorization: `Bearer ${token.access_token}` },
+    }),
   ]);
+  if (!eRes.ok || !rRes.ok) {
+    const eTxt = await eRes.text(),
+      rTxt = await rRes.text();
+    return NextResponse.text(`Lookup error: ${eTxt}; ${rTxt}`, { status: 500 });
+  }
+  const { Employees } = await eRes.json();
+  const { EarningsRates } = await rRes.json();
 
-  // 4️⃣ Build Timesheets entries grouped by employee
-  const timesheetsByEmployee = {};
-  for (const row of parsed) {
-    const key = `${row.firstname}_${row.lastname}`;
-    if (!timesheetsByEmployee[key]) {
-      // Find the matching Xero EmployeeID
+  // 4️⃣ Build Timesheet batch
+  const byEmp = {};
+  for (const r of rows) {
+    const key = `${r.firstname}_${r.lastname}`;
+    if (!byEmp[key]) {
       const emp = Employees.find(
-        (e) => e.FirstName === row.firstname && e.LastName === row.lastname
+        (e) => e.FirstName === r.firstname && e.LastName === r.lastname
       );
       if (!emp) {
-        return new Response(
-          `Unknown employee: ${row.firstname} ${row.lastname}`,
+        return NextResponse.text(
+          `Unknown employee: ${r.firstname} ${r.lastname}`,
           { status: 400 }
         );
       }
-      timesheetsByEmployee[key] = {
+      byEmp[key] = {
         EmployeeID: emp.EmployeeID,
-        StartDate: "2025-06-17", // ← adjust your pay period here
+        StartDate: "2025-06-17",
         EndDate: "2025-06-30",
         TimesheetLines: [],
       };
     }
-
-    const entry = timesheetsByEmployee[key];
-
-    // Map each column to an EarningsRateID + hours or fixed amount
-    const addLine = (rateName, units) => {
-      if (!units) return;
-      const rate = EarningsRates.find((r) => r.Name === rateName);
-      if (!rate) throw new Error(`Missing rate: ${rateName}`);
+    const entry = byEmp[key];
+    const add = (name, v) => {
+      if (!v) return;
+      const rate = EarningsRates.find((x) => x.Name === name);
+      if (!rate) throw new Error(`Missing rate: ${name}`);
       entry.TimesheetLines.push({
         EarningsRateID: rate.EarningsRateID,
-        NumberOfUnits: units,
+        NumberOfUnits: v,
         Date: entry.StartDate,
       });
     };
-
-    addLine("Ordinary Hours", row["normal hours"]);
-    addLine("Overtime 1.5", row["overtime 1.5"]);
-    addLine("Overtime 2.0", row["overtime 2.0"]);
-    addLine("Overtime 2.5", row["overtime 2.5"]);
-    addLine("Site Allowance", row["site allowance"]);
-    addLine("Meal Allowance", row["meal allowance"]);
-    // …and so on for your “uplift” / “laha” etc., matching their Xero rate names
+    add("Ordinary Hours", r["normal hours"]);
+    add("Overtime 1.5", r["overtime 1.5"]);
+    add("Overtime 2.0", r["overtime 2.0"]);
+    add("Overtime 2.5", r["overtime 2.5"]);
+    add("Site Allowance", r["site allowance"]);
+    add("Meal Allowance", r["meal allowance"]);
   }
 
-  // 5️⃣ Collect into one array
-  const Timesheets = Object.values(timesheetsByEmployee);
+  const Timesheets = Object.values(byEmp);
 
-  // 6️⃣ Send the batch to Xero
-  const resp = await fetch("https://api.xero.com/payroll.xro/2.0/Timesheets", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token.access_token}`,
-      "Content-Type": "application/json",
-      Accept: "application/json",
-    },
-    body: JSON.stringify({ Timesheets }),
-  });
-
-  if (!resp.ok) {
-    const err = await resp.text();
-    return new Response(`Xero API error: ${err}`, { status: 500 });
-  }
-
-  // 7️⃣ Return success
-  return new Response(
-    JSON.stringify({ success: true, count: Timesheets.length }),
-    { headers: { "Content-Type": "application/json" } }
+  // 5️⃣ Send to Xero
+  const postRes = await fetch(
+    "https://api.xero.com/payroll.xro/2.0/Timesheets",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ Timesheets }),
+    }
   );
+  if (!postRes.ok) {
+    const msg = await postRes.text();
+    return NextResponse.text(`Xero POST error: ${msg}`, { status: 500 });
+  }
+
+  return NextResponse.json({ success: true, count: Timesheets.length });
 }
